@@ -1,0 +1,20 @@
+[Unit]
+Description=Project Zomboid dedicated server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ pz_user }}
+Group={{ pz_group }}
+WorkingDirectory={{ pz_install_dir }}
+ExecStart=/usr/bin/screen -D -m -S pz-{{ pz_server_name }} ./start-server.sh -servername {{ pz_server_name }}
+ExecStop={{ pz_console_script }} quit
+TimeoutStopSec=180
+KillMode=mixed
+Restart=on-failure
+RestartSec=15
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target

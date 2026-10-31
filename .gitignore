@@ -1,0 +1,15 @@
+# Local Ansible inventory and run artifacts
+/inventory.ini
+*.retry
+.ansible/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

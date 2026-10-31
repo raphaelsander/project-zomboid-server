@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+service=project-zomboid
+lock_file="/run/lock/pz-{{ pz_server_name }}-maintenance.lock"
+restart_server=0
+maintenance_started_at=$(date --iso-8601=seconds)
+maintenance_started_epoch=$(date +%s)
+
+printf 'Maintenance started at %s.\n' "$maintenance_started_at"
+
+finish() {
+    local status=$?
+    local finished_at
+    local finished_epoch
+
+    if (( restart_server )); then
+        printf 'Maintenance failed; attempting to start Project Zomboid again.\n' >&2
+        systemctl start "$service" || printf 'Could not restart Project Zomboid; check systemd logs.\n' >&2
+    fi
+    finished_at=$(date --iso-8601=seconds)
+    finished_epoch=$(date +%s)
+    printf 'Maintenance finished at %s (elapsed: %s seconds, exit status: %s).\n' \
+        "$finished_at" "$(( finished_epoch - maintenance_started_epoch ))" "$status"
+    exit "$status"
+}
+trap finish EXIT
+
+exec 9>"$lock_file"
+if ! flock -n 9; then
+    printf 'Another Project Zomboid maintenance run is already in progress.\n' >&2
+    exit 1
+fi
+
+if ! systemctl is-active --quiet "$service"; then
+    printf 'Project Zomboid is not active; refusing to run maintenance.\n' >&2
+    exit 1
+fi
+
+"{{ pz_console_script }}" save
+sleep {{ pz_save_wait_seconds | int }}
+
+systemctl stop "$service"
+restart_server=1
+
+runuser -u "{{ pz_user }}" -- env HOME="{{ pz_home }}" \
+    "{{ pz_steamcmd_path }}" \
+    +force_install_dir "{{ pz_install_dir }}" \
+    +login anonymous \
+    +app_update "{{ pz_app_id }}" validate \
+    +quit
+
+systemctl start "$service"
+restart_server=0
+printf 'Project Zomboid save, update and restart completed successfully.\n'

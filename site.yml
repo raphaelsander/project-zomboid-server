@@ -1,0 +1,161 @@
+---
+- name: Install and manage a Project Zomboid dedicated server
+  hosts: pz_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    pz_user: pzuser
+    pz_group: "{{ pz_user }}"
+    pz_home: "/home/{{ pz_user }}"
+    pz_install_dir: /opt/pzserver
+    pz_server_name: zomboid
+    pz_app_id: "380870"
+    pz_steamcmd_path: /usr/games/steamcmd
+    pz_save_wait_seconds: 30
+    pz_cron_minute: "0"
+    pz_cron_hour: "5"
+    pz_console_script: /usr/local/bin/pz-console
+    pz_maintenance_script: /usr/local/sbin/pz-maintenance
+    pz_log_file: /var/log/pz-maintenance.log
+
+  pre_tasks:
+    - name: Validate operating system and server settings
+      ansible.builtin.assert:
+        that:
+          - ansible_facts["os_family"] == "Debian"
+          - pz_server_name is match("^[A-Za-z0-9_-]+$")
+          - pz_save_wait_seconds | int >= 0
+          - pz_cron_minute is match("^[0-5]?[0-9]$")
+          - pz_cron_hour is match("^([0-9]|1[0-9]|2[0-3])$")
+        fail_msg: >-
+          This playbook supports Debian/Ubuntu, a server name containing only
+          letters, digits, underscores or hyphens, and valid cron time values.
+
+  tasks:
+    - name: Enable Ubuntu multiverse repository for SteamCMD
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu {{ ansible_facts['distribution_release'] }} multiverse"
+        state: present
+      when: ansible_facts["distribution"] == "Ubuntu"
+
+    - name: Check configured foreign architectures
+      ansible.builtin.command: dpkg --print-foreign-architectures
+      register: pz_foreign_architectures
+      changed_when: false
+
+    - name: Enable 32-bit packages required by SteamCMD
+      ansible.builtin.command: dpkg --add-architecture i386
+      when: "'i386' not in pz_foreign_architectures.stdout_lines"
+
+    - name: Install SteamCMD and server runtime tools
+      ansible.builtin.apt:
+        name:
+          - cron
+          - screen
+          - steamcmd
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure cron is enabled
+      ansible.builtin.service:
+        name: cron
+        state: started
+        enabled: true
+
+    - name: Create Project Zomboid service group
+      ansible.builtin.group:
+        name: "{{ pz_group }}"
+        state: present
+
+    - name: Create Project Zomboid service account
+      ansible.builtin.user:
+        name: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        create_home: true
+        home: "{{ pz_home }}"
+        shell: /bin/bash
+        state: present
+
+    - name: Create Ansible temporary directory for the service account
+      ansible.builtin.file:
+        path: "{{ pz_home }}/.ansible/tmp"
+        state: directory
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0700"
+
+    - name: Create server installation directory
+      ansible.builtin.file:
+        path: "{{ pz_install_dir }}"
+        state: directory
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0755"
+
+    - name: Install Project Zomboid dedicated server
+      ansible.builtin.command:
+        argv:
+          - "{{ pz_steamcmd_path }}"
+          - +force_install_dir
+          - "{{ pz_install_dir }}"
+          - +login
+          - anonymous
+          - +app_update
+          - "{{ pz_app_id }}"
+          - validate
+          - +quit
+        creates: "{{ pz_install_dir }}/start-server.sh"
+      become_user: "{{ pz_user }}"
+      environment:
+        HOME: "{{ pz_home }}"
+
+    - name: Install server console helper
+      ansible.builtin.template:
+        src: templates/pz-console.sh.j2
+        dest: "{{ pz_console_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install server maintenance script
+      ansible.builtin.template:
+        src: templates/pz-maintenance.sh.j2
+        dest: "{{ pz_maintenance_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install systemd service
+      ansible.builtin.template:
+        src: templates/pz-server.service.j2
+        dest: /etc/systemd/system/project-zomboid.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Project Zomboid
+
+    - name: Enable and start Project Zomboid
+      ansible.builtin.systemd_service:
+        name: project-zomboid
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Schedule daily save, update and restart
+      ansible.builtin.cron:
+        name: Project Zomboid save, update and restart
+        user: root
+        minute: "{{ pz_cron_minute }}"
+        hour: "{{ pz_cron_hour }}"
+        job: "{{ pz_maintenance_script }} >> {{ pz_log_file }} 2>&1"
+        state: present
+
+  handlers:
+    - name: Restart Project Zomboid
+      ansible.builtin.systemd_service:
+        name: project-zomboid
+        state: restarted
+        daemon_reload: true
