@@ -28,6 +28,10 @@
           - ansible_facts["os_family"] == "Debian"
           - pz_server_name is match("^[A-Za-z0-9_-]+$")
           - pz_save_wait_seconds | int >= 0
+          - pz_admin_username is defined
+          - pz_admin_username | default('') is match("^[A-Za-z0-9_-]{1,32}$")
+          - pz_admin_password is defined
+          - pz_admin_password | default('') is match("^[A-Za-z0-9_-]{16,128}$")
           - pz_rcon_password is defined
           - pz_rcon_password | default('') is match("^[A-Za-z0-9_-]{32,}$")
           - pz_rcon_port | int >= 1
@@ -37,8 +41,9 @@
         fail_msg: >-
           This playbook supports Debian/Ubuntu, a server name containing only
           letters, digits, underscores or hyphens, a valid cron time, a valid
-          RCON port, and a RCON password of at least 32 URL-safe characters
-          supplied through Ansible Vault.
+          RCON port, and admin and RCON credentials supplied through Ansible
+          Vault. Admin passwords must be 16-128 URL-safe characters and RCON
+          passwords must be at least 32 URL-safe characters.
 
   tasks:
     - name: Enable Ubuntu multiverse repository for SteamCMD
@@ -60,7 +65,6 @@
       ansible.builtin.apt:
         name:
           - cron
-          - screen
           - steamcmd
         state: present
         update_cache: true
@@ -101,6 +105,16 @@
         owner: "{{ pz_user }}"
         group: "{{ pz_group }}"
         mode: "0750"
+
+    - name: Install protected Project Zomboid administrator credentials
+      ansible.builtin.template:
+        src: templates/pz-admin-credentials.j2
+        dest: "{{ pz_home }}/.pz-admin-credentials"
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart Project Zomboid
 
     - name: Configure Project Zomboid RCON port
       ansible.builtin.lineinfile:
