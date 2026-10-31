@@ -14,6 +14,7 @@
     pz_app_id: "380870"
     pz_steamcmd_path: /usr/games/steamcmd
     pz_save_wait_seconds: 30
+    pz_rcon_port: 27015
     pz_cron_minute: "0"
     pz_cron_hour: "5"
     pz_console_script: /usr/local/bin/pz-console
@@ -27,11 +28,17 @@
           - ansible_facts["os_family"] == "Debian"
           - pz_server_name is match("^[A-Za-z0-9_-]+$")
           - pz_save_wait_seconds | int >= 0
+          - pz_rcon_password is defined
+          - pz_rcon_password | default('') is match("^[A-Za-z0-9_-]{32,}$")
+          - pz_rcon_port | int >= 1
+          - pz_rcon_port | int <= 65535
           - pz_cron_minute is match("^[0-5]?[0-9]$")
           - pz_cron_hour is match("^([0-9]|1[0-9]|2[0-3])$")
         fail_msg: >-
           This playbook supports Debian/Ubuntu, a server name containing only
-          letters, digits, underscores or hyphens, and valid cron time values.
+          letters, digits, underscores or hyphens, a valid cron time, a valid
+          RCON port, and a RCON password of at least 32 URL-safe characters
+          supplied through Ansible Vault.
 
   tasks:
     - name: Enable Ubuntu multiverse repository for SteamCMD
@@ -87,6 +94,37 @@
         group: "{{ pz_group }}"
         mode: "0700"
 
+    - name: Create Project Zomboid server configuration directory
+      ansible.builtin.file:
+        path: "{{ pz_home }}/Zomboid/Server"
+        state: directory
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0750"
+
+    - name: Configure Project Zomboid RCON port
+      ansible.builtin.lineinfile:
+        path: "{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}.ini"
+        regexp: "^RCONPort="
+        line: "RCONPort={{ pz_rcon_port | int }}"
+        create: true
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      notify: Restart Project Zomboid
+
+    - name: Configure Project Zomboid RCON password
+      ansible.builtin.lineinfile:
+        path: "{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}.ini"
+        regexp: "^RCONPassword="
+        line: "RCONPassword={{ pz_rcon_password }}"
+        create: true
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart Project Zomboid
+
     - name: Create server installation directory
       ansible.builtin.file:
         path: "{{ pz_install_dir }}"
@@ -114,7 +152,7 @@
 
     - name: Install server console helper
       ansible.builtin.template:
-        src: templates/pz-console.sh.j2
+        src: templates/pz-console.py.j2
         dest: "{{ pz_console_script }}"
         owner: root
         group: root

@@ -1,5 +1,6 @@
 # Local Ansible inventory and run artifacts
 /inventory.ini
+/vault.yml
 *.retry
 .ansible/
 

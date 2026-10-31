@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+import socket
+import struct
+import sys
+from pathlib import Path
+
+
+server_config = Path(
+    {{ (pz_home ~ '/Zomboid/Server/' ~ pz_server_name ~ '.ini') | to_json }}
+)
+max_packet_size = 4 * 1024 * 1024
+
+
+def setting(name):
+    for line in server_config.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name:
+            return value.strip()
+    raise RuntimeError(f"{name} is missing from {server_config}")
+
+
+def read_exact(connection, length):
+    data = bytearray()
+    while len(data) < length:
+        chunk = connection.recv(length - len(data))
+        if not chunk:
+            raise ConnectionError("RCON connection closed unexpectedly")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def receive_packet(connection):
+    size = struct.unpack("<i", read_exact(connection, 4))[0]
+    if size < 10 or size > max_packet_size:
+        raise RuntimeError(f"Invalid RCON packet size: {size}")
+    payload = read_exact(connection, size)
+    request_id, packet_type = struct.unpack("<ii", payload[:8])
+    return request_id, packet_type, payload[8:-2]
+
+
+def send_packet(connection, request_id, packet_type, body):
+    payload = body.encode("utf-8") + b"\x00\x00"
+    packet = struct.pack("<iii", len(payload) + 8, request_id, packet_type)
+    connection.sendall(packet + payload)
+
+
+def main():
+    if len(sys.argv) != 2 or not sys.argv[1]:
+        raise RuntimeError("Usage: pz-console <server-command>")
+    command = sys.argv[1]
+    if "\x00" in command:
+        raise RuntimeError("RCON commands cannot contain null bytes")
+
+    password = setting("RCONPassword")
+    if not password:
+        raise RuntimeError("RCONPassword is empty in the server configuration")
+    port = int(setting("RCONPort"))
+
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        send_packet(connection, 1, 3, password)
+        while True:
+            request_id, packet_type, _ = receive_packet(connection)
+            if request_id == -1:
+                raise RuntimeError("RCON authentication failed")
+            if request_id == 1 and packet_type == 2:
+                break
+
+        send_packet(connection, 2, 2, command)
+        while True:
+            request_id, packet_type, response = receive_packet(connection)
+            if request_id == -1:
+                raise RuntimeError("RCON connection was rejected")
+            if request_id == 2 and packet_type == 0:
+                break
+
+    if response:
+        output = response.decode("utf-8", errors="replace")
+        sys.stdout.write(output)
+        if not output.endswith("\n"):
+            sys.stdout.write("\n")
+    else:
+        print("Command sent successfully; the server returned no output.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"RCON command failed: {error}", file=sys.stderr)
+        sys.exit(1)
