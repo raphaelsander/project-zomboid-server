@@ -45,9 +45,11 @@ def send_packet(connection, request_id, packet_type, body):
 
 
 def main():
-    if len(sys.argv) != 2 or not sys.argv[1]:
-        raise RuntimeError("Usage: pz-console <server-command>")
-    command = sys.argv[1]
+    if len(sys.argv) < 2:
+        raise RuntimeError("Usage: pz-console <server-command> [arguments...]")
+    command = " ".join(sys.argv[1:])
+    if not command:
+        raise RuntimeError("Usage: pz-console <server-command> [arguments...]")
     if "\x00" in command:
         raise RuntimeError("RCON commands cannot contain null bytes")
 

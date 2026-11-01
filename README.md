@@ -58,7 +58,9 @@ sudo systemctl start project-zomboid
 
 The console helper sends commands over local RCON; systemd uses it to send
 `quit` when stopping the server. For example, run
-`sudo /usr/local/bin/pz-console players` to send a command. The scheduled
+`sudo /usr/local/bin/pz-console players` to send a command, or
+`sudo /usr/local/bin/pz-console adduser "username" "password"` to add a
+whitelisted user (the password argument is optional). The scheduled
 maintenance sends `save`, waits for the configured save interval, gracefully
 stops the service, runs SteamCMD's `app_update 380870 validate`, and starts
 the service again. A lock prevents overlapping maintenance runs. If an update
