@@ -9,13 +9,18 @@ User={{ pz_user }}
 Group={{ pz_group }}
 WorkingDirectory={{ pz_install_dir }}
 EnvironmentFile={{ pz_home }}/.pz-admin-credentials
+ExecStartPre=+/usr/bin/install -o {{ pz_user }} -g {{ pz_group }} -m 0644 {{ pz_launcher_config }} {{ pz_install_dir }}/ProjectZomboid64.json
 ExecStart={{ pz_install_dir }}/start-server.sh -servername {{ pz_server_name }} -adminusername ${PZ_ADMIN_USERNAME} -adminpassword ${PZ_ADMIN_PASSWORD}
 ExecStop={{ pz_console_script }} quit
 TimeoutStopSec=180
 KillMode=mixed
 Restart=on-failure
-RestartSec=15
+RestartSec=30s
 LimitNOFILE=100000
+MemoryHigh={{ pz_service_memory_high }}
+MemoryMax={{ pz_service_memory_max }}
+MemorySwapMax={{ pz_service_memory_swap_max }}
+OOMPolicy=kill
 
 [Install]
 WantedBy=multi-user.target

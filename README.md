@@ -35,8 +35,19 @@ a daily in-game save followed by a Steam update and graceful restart.
    Generate strong passwords with
    `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`.
 3. Edit the variables in `site.yml` if you want to change the server name,
-   install path, SteamCMD path, RCON port, or maintenance time. The default cron
-   schedule is daily at 05:00 in the server's local timezone.
+   install path, SteamCMD path, RCON port, memory limits, or maintenance time.
+   The Java heap defaults to a 4 GB minimum and 6 GB maximum in a launcher
+   configuration under `/etc/project-zomboid`, outside the SteamCMD-managed
+   installation. systemd copies that config into `/opt/pzserver` before each
+   start, including after maintenance updates. systemd applies memory pressure
+   above 8 GB, caps the service at 9 GB, and limits swap to 256 MB; OOM kills
+   the service and it retries after 30 seconds. The heap maximum must be lower
+   than the memory pressure threshold to leave room for memory used outside
+   the Java heap. Confirm that the
+   installed `start-server.sh` version reads `ProjectZomboid64.json`; versions
+   that invoke Java directly with their own heap flags will ignore this file.
+   See the [Project Zomboid startup parameters](https://pzwiki.net/wiki/Startup_parameters).
+   The default cron schedule is daily at 05:00 in the server's local timezone.
 4. Run:
 
    ```sh

@@ -1,0 +1,18 @@
+{
+  "mainClass": "zombie/network/GameServer",
+  "classpath": [
+    "java/.",
+    "java/projectzomboid.jar"
+  ],
+  "vmArgs": [
+    "-Djava.awt.headless=true",
+    "-Xms{{ pz_java_heap_min | lower }}",
+    "-Xmx{{ pz_java_heap_max | lower }}",
+    "-Dzomboid.steam=1",
+    "-Dzomboid.znetlog=1",
+    "-Djava.library.path=linux64/",
+    "-Djava.security.egd=file:/dev/urandom",
+    "-XX:+UseZGC",
+    "-XX:-OmitStackTraceInFastThrow"
+  ]
+}

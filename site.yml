@@ -14,6 +14,13 @@
     pz_app_id: "380870"
     pz_steamcmd_path: /usr/games/steamcmd
     pz_save_wait_seconds: 30
+    pz_java_heap_min: 4G
+    pz_java_heap_max: 6G
+    pz_service_memory_high: 8G
+    pz_service_memory_max: 9G
+    pz_service_memory_swap_max: 256M
+    pz_config_dir: /etc/project-zomboid
+    pz_launcher_config: "{{ pz_config_dir }}/ProjectZomboid64.json"
     pz_rcon_port: 27015
     pz_cron_minute: "0"
     pz_cron_hour: "5"
@@ -28,6 +35,11 @@
           - ansible_facts["os_family"] == "Debian"
           - pz_server_name is match("^[A-Za-z0-9_-]+$")
           - pz_save_wait_seconds | int >= 0
+          - pz_java_heap_min is match("^[1-9][0-9]*[kKmMgGtT]?$")
+          - pz_java_heap_max is match("^[1-9][0-9]*[kKmMgGtT]?$")
+          - (pz_java_heap_min | human_to_bytes) <= (pz_java_heap_max | human_to_bytes)
+          - (pz_java_heap_max | human_to_bytes) < (pz_service_memory_high | human_to_bytes)
+          - (pz_java_heap_max | human_to_bytes) < (pz_service_memory_max | human_to_bytes)
           - pz_admin_username is defined
           - pz_admin_username | default('') is match("^[A-Za-z0-9_-]{1,32}$")
           - pz_admin_password is defined
@@ -41,9 +53,10 @@
         fail_msg: >-
           This playbook supports Debian/Ubuntu, a server name containing only
           letters, digits, underscores or hyphens, a valid cron time, a valid
-          RCON port, and admin and RCON credentials supplied through Ansible
-          Vault. Admin passwords must be 16-128 URL-safe characters and RCON
-          passwords must be at least 32 URL-safe characters.
+          RCON port, valid Java heap and service memory limits, and admin and
+          RCON credentials supplied through Ansible Vault. Admin passwords
+          must be 16-128 URL-safe characters and RCON passwords must be at
+          least 32 URL-safe characters.
 
   tasks:
     - name: Enable Ubuntu multiverse repository for SteamCMD
@@ -147,6 +160,14 @@
         group: "{{ pz_group }}"
         mode: "0755"
 
+    - name: Create Project Zomboid launcher configuration directory
+      ansible.builtin.file:
+        path: "{{ pz_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Install Project Zomboid dedicated server
       ansible.builtin.command:
         argv:
@@ -163,6 +184,15 @@
       become_user: "{{ pz_user }}"
       environment:
         HOME: "{{ pz_home }}"
+
+    - name: Configure Project Zomboid Java launcher
+      ansible.builtin.template:
+        src: templates/ProjectZomboid64.json.j2
+        dest: "{{ pz_launcher_config }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart Project Zomboid
 
     - name: Install server console helper
       ansible.builtin.template:
