@@ -78,7 +78,10 @@ The console helper sends commands over local RCON; systemd uses it to send
 `quit` when stopping the server. For example, run
 `sudo /usr/local/bin/pz-console players` to send a command, or
 `sudo /usr/local/bin/pz-console adduser "username" "password"` to add a
-whitelisted user (the password argument is optional). The scheduled
+whitelisted user (the password argument is optional). To broadcast a message,
+use `sudo /usr/local/bin/pz-console servermsg "message for all players"`. The
+helper preserves argument boundaries and quotes arguments containing spaces
+for server commands, including `servermsg` and `adduser`. The scheduled
 maintenance first compares the installed Project Zomboid build ID with the
 latest public build reported by SteamCMD. If the installed build is at least as
 new as the public one, it skips maintenance; if a newer public build is

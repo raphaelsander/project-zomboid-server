@@ -44,10 +44,26 @@ def send_packet(connection, request_id, packet_type, body):
     connection.sendall(packet + payload)
 
 
+def quote_argument(argument):
+    if any(character.isspace() for character in argument) or '"' in argument:
+        return '"' + argument.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return argument
+
+
+def build_command(arguments):
+    command_name = arguments[0]
+    if command_name in ("servermsg", "/servermsg"):
+        message = " ".join(arguments[1:])
+        if not message:
+            raise RuntimeError('Usage: pz-console servermsg "message"')
+        return f'servermsg {quote_argument(message)}'
+    return " ".join(quote_argument(argument) for argument in arguments)
+
+
 def main():
     if len(sys.argv) < 2:
         raise RuntimeError("Usage: pz-console <server-command> [arguments...]")
-    command = " ".join(sys.argv[1:])
+    command = build_command(sys.argv[1:])
     if not command:
         raise RuntimeError("Usage: pz-console <server-command> [arguments...]")
     if "\x00" in command:
