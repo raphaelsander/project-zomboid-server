@@ -85,8 +85,9 @@ for server commands, including `servermsg` and `adduser`. The scheduled
 maintenance first compares the installed Project Zomboid build ID with the
 latest public build reported by SteamCMD. If the installed build is at least as
 new as the public one, it skips maintenance; if a newer public build is
-available, it sends `save`, waits for the
-configured save interval, gracefully stops the service, runs SteamCMD's
+available, it broadcasts that the server will update and restart in five
+minutes, waits for the countdown, sends `save`, waits for the configured save
+interval, gracefully stops the service, runs SteamCMD's
 `app_update 380870 validate`, and starts the service again. If it cannot read
 the installed manifest or query the latest build, it logs an error and leaves
 the server running. A lock prevents overlapping maintenance runs. If an update
@@ -112,4 +113,10 @@ sudo systemctl status project-zomboid
 sudo journalctl -u project-zomboid
 sudo systemctl restart project-zomboid
 sudo /usr/local/sbin/pz-maintenance
+sudo /usr/local/sbin/pz-maintenance --now
 ```
+
+The scheduled maintenance runs without arguments, so it notifies players and
+waits five minutes when an update is available. Run `pz-maintenance --now` to
+skip the notification and five-minute countdown for a manual update. The
+configured save wait after sending `save` still applies.
