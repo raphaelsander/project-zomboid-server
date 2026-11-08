@@ -59,7 +59,12 @@ using the documented `-adminusername` and `-adminpassword` startup parameters.
 Credentials are stored in Ansible Vault and in a protected environment file
 readable only by the server account. RCON is configured automatically on the
 default TCP port `27015`; its password is stored in the server configuration
-with owner-only permissions. Stop the service before editing server settings:
+with owner-only permissions. The playbook installs the initial server,
+sandbox, and spawn-region settings from `templates/` before starting the
+service and synchronizes them on every run. Edit the corresponding files in
+`templates/` to make persistent changes; edits made directly on the server
+will be overwritten by the next playbook run. Stop the service before editing
+server settings:
 
 ```sh
 sudo systemctl stop project-zomboid

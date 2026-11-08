@@ -119,6 +119,33 @@
         group: "{{ pz_group }}"
         mode: "0750"
 
+    - name: Configure Project Zomboid server settings
+      ansible.builtin.template:
+        src: templates/zomboid.ini
+        dest: "{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}.ini"
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      notify: Restart Project Zomboid
+
+    - name: Configure Project Zomboid sandbox settings
+      ansible.builtin.template:
+        src: templates/zomboid_SandboxVars.lua
+        dest: "{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}_SandboxVars.lua"
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      notify: Restart Project Zomboid
+
+    - name: Configure Project Zomboid spawn regions
+      ansible.builtin.template:
+        src: templates/zomboid_spawnregions.lua
+        dest: "{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}_spawnregions.lua"
+        owner: "{{ pz_user }}"
+        group: "{{ pz_group }}"
+        mode: "0600"
+      notify: Restart Project Zomboid
+
     - name: Install protected Project Zomboid administrator credentials
       ansible.builtin.template:
         src: templates/pz-admin-credentials.j2
