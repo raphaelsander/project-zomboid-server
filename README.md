@@ -114,9 +114,13 @@ sudo journalctl -u project-zomboid
 sudo systemctl restart project-zomboid
 sudo /usr/local/sbin/pz-maintenance
 sudo /usr/local/sbin/pz-maintenance --now
+sudo /usr/local/sbin/pz-maintenance --skip-version-check
 ```
 
 The scheduled maintenance runs without arguments, so it notifies players and
 waits five minutes when an update is available. Run `pz-maintenance --now` to
 skip the notification and five-minute countdown for a manual update. The
-configured save wait after sending `save` still applies.
+configured save wait after sending `save` still applies. Use
+`pz-maintenance --skip-version-check` to run maintenance regardless of whether
+a newer public build is available. This option does not skip the player
+notification or countdown; combine it with `--now` to skip both.

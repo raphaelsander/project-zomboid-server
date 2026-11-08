@@ -5,13 +5,22 @@ service=project-zomboid
 lock_file="/run/lock/pz-{{ pz_server_name }}-maintenance.lock"
 manifest="{{ pz_install_dir }}/steamapps/appmanifest_{{ pz_app_id }}.acf"
 run_now=0
-if (( $# > 0 )); then
-    if (( $# != 1 )) || [[ "$1" != "--now" ]]; then
-        printf 'Usage: %s [--now]\n' "$0" >&2
-        exit 2
-    fi
-    run_now=1
-fi
+skip_version_check=0
+while (( $# > 0 )); do
+    case "$1" in
+        --now)
+            run_now=1
+            ;;
+        --skip-version-check)
+            skip_version_check=1
+            ;;
+        *)
+            printf 'Usage: %s [--now] [--skip-version-check]\n' "$0" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
 steamcmd_output=
 restart_server=0
 maintenance_started_at=$(date --iso-8601=seconds)
@@ -50,30 +59,33 @@ if ! systemctl is-active --quiet "$service"; then
     exit 1
 fi
 
-if [[ ! -r "$manifest" ]]; then
-    printf 'Cannot read installed Steam manifest %s; refusing to stop the server.\n' "$manifest" >&2
-    exit 1
-fi
+if (( skip_version_check )); then
+    printf 'Skipping the Project Zomboid version check as requested.\n'
+else
+    if [[ ! -r "$manifest" ]]; then
+        printf 'Cannot read installed Steam manifest %s; refusing to stop the server.\n' "$manifest" >&2
+        exit 1
+    fi
 
-installed_build_id=$(awk '$1 == "\"buildid\"" { gsub(/"/, "", $2); print $2; exit }' "$manifest")
-if [[ ! "$installed_build_id" =~ ^[0-9]+$ ]]; then
-    printf 'Cannot determine the installed Project Zomboid build ID; refusing to stop the server.\n' >&2
-    exit 1
-fi
+    installed_build_id=$(awk '$1 == "\"buildid\"" { gsub(/"/, "", $2); print $2; exit }' "$manifest")
+    if [[ ! "$installed_build_id" =~ ^[0-9]+$ ]]; then
+        printf 'Cannot determine the installed Project Zomboid build ID; refusing to stop the server.\n' >&2
+        exit 1
+    fi
 
-steamcmd_output=$(mktemp)
-if ! runuser -u "{{ pz_user }}" -- env HOME="{{ pz_home }}" \
-    "{{ pz_steamcmd_path }}" \
-    +login anonymous \
-    +app_info_update 1 \
-    +app_info_print "{{ pz_app_id }}" \
-    +quit >"$steamcmd_output" 2>&1; then
-    printf 'Could not query the latest Project Zomboid build; refusing to stop the server.\n' >&2
-    tail -n 40 "$steamcmd_output" >&2
-    exit 1
-fi
+    steamcmd_output=$(mktemp)
+    if ! runuser -u "{{ pz_user }}" -- env HOME="{{ pz_home }}" \
+        "{{ pz_steamcmd_path }}" \
+        +login anonymous \
+        +app_info_update 1 \
+        +app_info_print "{{ pz_app_id }}" \
+        +quit >"$steamcmd_output" 2>&1; then
+        printf 'Could not query the latest Project Zomboid build; refusing to stop the server.\n' >&2
+        tail -n 40 "$steamcmd_output" >&2
+        exit 1
+    fi
 
-if ! remote_build_id=$(python3 - "$steamcmd_output" <<'PY'
+    if ! remote_build_id=$(python3 - "$steamcmd_output" <<'PY'
 import json
 import re
 import sys
@@ -114,20 +126,21 @@ for index in range(len(tokens) - 1):
 else:
     raise ValueError("public build ID not found in Steam app info")
 PY
-); then
-    printf 'Could not determine the latest public Project Zomboid build; refusing to stop the server.\n' >&2
-    tail -n 40 "$steamcmd_output" >&2
-    exit 1
-fi
+    ); then
+        printf 'Could not determine the latest public Project Zomboid build; refusing to stop the server.\n' >&2
+        tail -n 40 "$steamcmd_output" >&2
+        exit 1
+    fi
 
-if (( 10#$remote_build_id <= 10#$installed_build_id )); then
-    printf 'No newer public Project Zomboid build is available (installed %s, latest %s); skipping maintenance.\n' \
+    if (( 10#$remote_build_id <= 10#$installed_build_id )); then
+        printf 'No newer public Project Zomboid build is available (installed %s, latest %s); skipping maintenance.\n' \
+            "$installed_build_id" "$remote_build_id"
+        exit 0
+    fi
+
+    printf 'Project Zomboid update found (installed build %s, latest public build %s).\n' \
         "$installed_build_id" "$remote_build_id"
-    exit 0
 fi
-
-printf 'Project Zomboid update found (installed build %s, latest public build %s).\n' \
-    "$installed_build_id" "$remote_build_id"
 
 if (( run_now )); then
     printf 'Running maintenance immediately without notifying players or waiting for the countdown.\n'
