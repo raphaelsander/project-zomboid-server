@@ -2,7 +2,7 @@
 
 This playbook installs a Linux dedicated server with SteamCMD, runs it as an
 unprivileged `pzuser` account under systemd, starts it at boot, and schedules
-a daily in-game save followed by a Steam update and graceful restart.
+a scheduled in-game save followed by a Steam update and graceful restart.
 
 ## Requirements
 
@@ -47,7 +47,9 @@ a daily in-game save followed by a Steam update and graceful restart.
    installed `start-server.sh` version reads `ProjectZomboid64.json`; versions
    that invoke Java directly with their own heap flags will ignore this file.
    See the [Project Zomboid startup parameters](https://pzwiki.net/wiki/Startup_parameters).
-   The default cron schedule is daily at 05:00 in the server's local timezone.
+   The maintenance check runs every 30 minutes by default. Change
+   `pz_maintenance_interval_minutes` in `site.yml` to a value from 1 to 59 to
+   use a different interval.
 4. Run:
 
    ```sh
@@ -77,9 +79,14 @@ The console helper sends commands over local RCON; systemd uses it to send
 `sudo /usr/local/bin/pz-console players` to send a command, or
 `sudo /usr/local/bin/pz-console adduser "username" "password"` to add a
 whitelisted user (the password argument is optional). The scheduled
-maintenance sends `save`, waits for the configured save interval, gracefully
-stops the service, runs SteamCMD's `app_update 380870 validate`, and starts
-the service again. A lock prevents overlapping maintenance runs. If an update
+maintenance first compares the installed Project Zomboid build ID with the
+latest public build reported by SteamCMD. If the installed build is at least as
+new as the public one, it skips maintenance; if a newer public build is
+available, it sends `save`, waits for the
+configured save interval, gracefully stops the service, runs SteamCMD's
+`app_update 380870 validate`, and starts the service again. If it cannot read
+the installed manifest or query the latest build, it logs an error and leaves
+the server running. A lock prevents overlapping maintenance runs. If an update
 fails after shutdown, the script attempts to start the server again. The
 maintenance log is written to `/var/log/pz-maintenance.log`. Each run logs its
 start and finish timestamps, elapsed time in seconds, and exit status.
