@@ -4,6 +4,8 @@ set -Eeuo pipefail
 service=project-zomboid
 lock_file="/run/lock/pz-{{ pz_server_name }}-maintenance.lock"
 manifest="{{ pz_install_dir }}/steamapps/appmanifest_{{ pz_app_id }}.acf"
+workshop_config="{{ pz_home }}/Zomboid/Server/{{ pz_server_name }}.ini"
+workshop_state="/var/lib/pz-maintenance-{{ pz_server_name }}-workshop.json"
 run_now=0
 skip_version_check=0
 while (( $# > 0 )); do
@@ -22,6 +24,8 @@ while (( $# > 0 )); do
     shift
 done
 steamcmd_output=
+workshop_check_result=
+workshop_updates_file=
 restart_server=0
 maintenance_started_at=$(date --iso-8601=seconds)
 maintenance_started_epoch=$(date +%s)
@@ -35,6 +39,12 @@ finish() {
 
     if [[ -n "$steamcmd_output" ]]; then
         rm -f "$steamcmd_output"
+    fi
+    if [[ -n "$workshop_check_result" ]]; then
+        rm -f "$workshop_check_result"
+    fi
+    if [[ -n "$workshop_updates_file" ]]; then
+        rm -f "$workshop_updates_file"
     fi
     if (( restart_server )); then
         printf 'Maintenance failed; attempting to start Project Zomboid again.\n' >&2
@@ -61,7 +71,9 @@ fi
 
 if (( skip_version_check )); then
     printf 'Skipping the Project Zomboid version check as requested.\n'
+    app_update_needed=1
 else
+    app_update_needed=0
     if [[ ! -r "$manifest" ]]; then
         printf 'Cannot read installed Steam manifest %s; refusing to stop the server.\n' "$manifest" >&2
         exit 1
@@ -135,11 +147,35 @@ PY
     if (( 10#$remote_build_id <= 10#$installed_build_id )); then
         printf 'No newer public Project Zomboid build is available (installed %s, latest %s); skipping maintenance.\n' \
             "$installed_build_id" "$remote_build_id"
-        exit 0
+    else
+        app_update_needed=1
+        printf 'Project Zomboid update found (installed build %s, latest public build %s).\n' \
+            "$installed_build_id" "$remote_build_id"
     fi
+fi
 
-    printf 'Project Zomboid update found (installed build %s, latest public build %s).\n' \
-        "$installed_build_id" "$remote_build_id"
+workshop_check_result=$(mktemp)
+workshop_updates_file=$(mktemp)
+if ! "{{ pz_workshop_script }}" check \
+    --app-id "{{ pz_workshop_app_id }}" \
+    --config "$workshop_config" \
+    --state "$workshop_state" \
+    --result "$workshop_check_result" >"$workshop_updates_file"; then
+    printf 'Could not verify Project Zomboid Workshop versions; refusing to stop the server.\n' >&2
+    exit 1
+fi
+
+workshop_update_ids=()
+if [[ -s "$workshop_updates_file" ]]; then
+    mapfile -t workshop_update_ids <"$workshop_updates_file"
+fi
+
+if (( ! app_update_needed && {% raw %}${#workshop_update_ids[@]}{% endraw %} == 0 )); then
+    exit 0
+fi
+
+if (( {% raw %}${#workshop_update_ids[@]}{% endraw %} > 0 )); then
+    printf 'Project Zomboid Workshop update required for %s item(s).\n' "{% raw %}${#workshop_update_ids[@]}{% endraw %}"
 fi
 
 if (( run_now )); then
@@ -168,12 +204,24 @@ sleep {{ pz_save_wait_seconds | int }}
 systemctl stop "$service"
 restart_server=1
 
+steamcmd_args=(+@ShutdownOnFailedCommand 1 +force_install_dir "{{ pz_install_dir }}" +login anonymous)
+if (( app_update_needed )); then
+    steamcmd_args+=(+app_update "{{ pz_app_id }}" validate)
+fi
+for workshop_item_id in "${workshop_update_ids[@]}"; do
+    steamcmd_args+=(+workshop_download_item "{{ pz_workshop_app_id }}" "$workshop_item_id" validate)
+done
+steamcmd_args+=(+quit)
+
 runuser -u "{{ pz_user }}" -- env HOME="{{ pz_home }}" \
-    "{{ pz_steamcmd_path }}" \
-    +force_install_dir "{{ pz_install_dir }}" \
-    +login anonymous \
-    +app_update "{{ pz_app_id }}" validate \
-    +quit
+    "{{ pz_steamcmd_path }}" "${steamcmd_args[@]}"
+
+if (( {% raw %}${#workshop_update_ids[@]}{% endraw %} > 0 )); then
+    "{{ pz_workshop_script }}" record \
+        --app-id "{{ pz_workshop_app_id }}" \
+        --state "$workshop_state" \
+        --result "$workshop_check_result"
+fi
 
 systemctl start "$service"
 restart_server=0

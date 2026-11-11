@@ -82,18 +82,26 @@ whitelisted user (the password argument is optional). To broadcast a message,
 use `sudo /usr/local/bin/pz-console servermsg "message for all players"`. The
 helper preserves argument boundaries and quotes arguments containing spaces
 for server commands, including `servermsg` and `adduser`. The scheduled
-maintenance first compares the installed Project Zomboid build ID with the
-latest public build reported by SteamCMD. If the installed build is at least as
-new as the public one, it skips maintenance; if a newer public build is
-available, it broadcasts that the server will update and restart in five
-minutes, waits for the countdown, sends `save`, waits for the configured save
-interval, gracefully stops the service, runs SteamCMD's
-`app_update 380870 validate`, and starts the service again. If it cannot read
-the installed manifest or query the latest build, it logs an error and leaves
-the server running. A lock prevents overlapping maintenance runs. If an update
-fails after shutdown, the script attempts to start the server again. The
-maintenance log is written to `/var/log/pz-maintenance.log`. Each run logs its
-start and finish timestamps, elapsed time in seconds, and exit status.
+maintenance compares the installed Project Zomboid build ID with the latest
+public build reported by SteamCMD, and checks the configured Workshop items
+against Steam's public item details (`time_updated` and `file_size`). The
+Workshop comparison uses a local state file under `/var/lib`; when that file
+does not exist, the current item versions are recorded as a baseline without
+forcing downloads. Later changes, including newly configured items, are logged
+with their previous and current update timestamps and file sizes. If neither
+the game nor any mod needs an update, maintenance is skipped. Otherwise, the
+script broadcasts that the server will update and restart in five minutes,
+waits for the countdown, sends `save`, waits for the configured save interval,
+gracefully stops the service, runs SteamCMD's `app_update 380870 validate`
+when needed and `workshop_download_item 108600 <id> validate` for changed
+Workshop items, then starts the service again. The saved Workshop versions
+are advanced only after SteamCMD succeeds. These public metadata checks detect
+published changes; they do not check mod compatibility with the server build.
+If it cannot read the installed manifest or query Steam, it logs an error and
+leaves the server running. A lock prevents overlapping maintenance runs. If
+an update fails after shutdown, the script attempts to start the server again.
+The maintenance log is written to `/var/log/pz-maintenance.log`. Each run logs
+its start and finish timestamps, elapsed time in seconds, and exit status.
 
 RCON listens on the server's TCP port and must not be exposed to untrusted
 networks. Restrict access to port `27015` in your firewall; the helper connects

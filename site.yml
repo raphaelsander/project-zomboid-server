@@ -12,6 +12,7 @@
     pz_install_dir: /opt/pzserver
     pz_server_name: zomboid
     pz_app_id: "380870"
+    pz_workshop_app_id: "108600"
     pz_steamcmd_path: /usr/games/steamcmd
     pz_save_wait_seconds: 30
     pz_java_heap_min: 4G
@@ -25,6 +26,7 @@
     pz_maintenance_interval_minutes: 30
     pz_console_script: /usr/local/bin/pz-console
     pz_maintenance_script: /usr/local/sbin/pz-maintenance
+    pz_workshop_script: /usr/local/sbin/pz-workshop
     pz_log_file: /var/log/pz-maintenance.log
 
   pre_tasks:
@@ -224,6 +226,14 @@
       ansible.builtin.template:
         src: templates/pz-console.py.j2
         dest: "{{ pz_console_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install Project Zomboid Workshop maintenance helper
+      ansible.builtin.template:
+        src: templates/pz-workshop.py.j2
+        dest: "{{ pz_workshop_script }}"
         owner: root
         group: root
         mode: "0755"

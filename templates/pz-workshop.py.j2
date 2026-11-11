@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+API_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
+BATCH_SIZE = 50
+
+
+def load_state(path, app_id):
+    if not path.exists():
+        return {"app_id": app_id, "items": {}}
+
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Cannot read Workshop version state {path}: {error}") from error
+
+    if not isinstance(state, dict) or state.get("app_id") != app_id:
+        raise ValueError(f"Workshop version state {path} has an unexpected format")
+    items = state.get("items")
+    if not isinstance(items, dict):
+        raise ValueError(f"Workshop version state {path} has an unexpected format")
+
+    for item_id, version in items.items():
+        if not re.fullmatch(r"[0-9]+", item_id) or not isinstance(version, dict):
+            raise ValueError(f"Workshop version state {path} has an unexpected format")
+        if (
+            not isinstance(version.get("time_updated"), int)
+            or version["time_updated"] < 1
+            or not isinstance(version.get("file_size"), int)
+            or version["file_size"] < 0
+        ):
+            raise ValueError(f"Workshop version state {path} has an unexpected format")
+
+    return state
+
+
+def read_workshop_ids(config_path):
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise ValueError(f"Cannot read Project Zomboid configuration {config_path}: {error}") from error
+
+    workshop_items = None
+    for line in lines:
+        match = re.match(r"^\s*WorkshopItems\s*=(.*)$", line)
+        if match:
+            workshop_items = match.group(1).strip()
+
+    if workshop_items is None:
+        raise ValueError(f"WorkshopItems was not found in {config_path}")
+    if not workshop_items:
+        return []
+
+    item_ids = []
+    seen = set()
+    for item_id in workshop_items.split(";"):
+        item_id = item_id.strip()
+        if not re.fullmatch(r"[0-9]+", item_id):
+            raise ValueError(f"Invalid Workshop item ID {item_id!r} in {config_path}")
+        if item_id not in seen:
+            item_ids.append(item_id)
+            seen.add(item_id)
+    return item_ids
+
+
+def fetch_versions(item_ids):
+    versions = {}
+    for start in range(0, len(item_ids), BATCH_SIZE):
+        batch = item_ids[start : start + BATCH_SIZE]
+        fields = [("itemcount", str(len(batch)))]
+        fields.extend(
+            (f"publishedfileids[{index}]", item_id)
+            for index, item_id in enumerate(batch)
+        )
+        request = Request(
+            API_URL,
+            data=urlencode(fields).encode("ascii"),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"Could not query Steam Workshop item details: {error}") from error
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("response"), dict):
+            raise ValueError("Steam returned an invalid Workshop details response")
+        details = payload["response"].get("publishedfiledetails")
+        if not isinstance(details, list):
+            raise ValueError("Steam returned an invalid Workshop details response")
+
+        received = set()
+        for detail in details:
+            if not isinstance(detail, dict) or str(detail.get("result")) != "1":
+                raise ValueError("Steam could not provide details for a configured Workshop item")
+            item_id = str(detail.get("publishedfileid", ""))
+            if item_id not in batch or item_id in received:
+                raise ValueError("Steam returned unexpected Workshop item details")
+            try:
+                time_updated = int(detail["time_updated"])
+                file_size = int(detail["file_size"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(f"Steam returned invalid version details for Workshop item {item_id}") from error
+            if time_updated < 1 or file_size < 0:
+                raise ValueError(f"Steam returned invalid version details for Workshop item {item_id}")
+            versions[item_id] = {
+                "time_updated": time_updated,
+                "file_size": file_size,
+            }
+            received.add(item_id)
+
+        if received != set(batch):
+            raise ValueError("Steam did not return details for every configured Workshop item")
+    return versions
+
+
+def format_version(version):
+    updated_at = datetime.fromtimestamp(
+        version["time_updated"], tz=timezone.utc
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"updated={updated_at}, size={version['file_size']} bytes"
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(prefix=".pz-workshop-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            os.fchmod(output.fileno(), 0o600)
+            json.dump(value, output, sort_keys=True)
+            output.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+
+
+def check(args):
+    item_ids = read_workshop_ids(args.config)
+    state_exists = args.state.exists()
+    state = load_state(args.state, args.app_id)
+    remote_versions = fetch_versions(item_ids) if item_ids else {}
+    if state_exists:
+        updates = [
+            item_id
+            for item_id in item_ids
+            if state["items"].get(item_id) != remote_versions[item_id]
+        ]
+    else:
+        updates = []
+        write_json(args.state, {"app_id": args.app_id, "items": remote_versions})
+        print(
+            f"Initialized Workshop version baseline for {len(remote_versions)} item(s); "
+            "no downloads are needed on the first check.",
+            file=sys.stderr,
+        )
+
+    if not item_ids:
+        print("No Workshop items are configured; skipping the mod version check.", file=sys.stderr)
+    elif updates:
+        print(f"Workshop updates detected for {len(updates)} item(s):", file=sys.stderr)
+        for item_id in updates:
+            previous = state["items"].get(item_id)
+            previous_version = format_version(previous) if previous else "not recorded"
+            print(
+                f"  {item_id}: {previous_version} -> "
+                f"{format_version(remote_versions[item_id])}",
+                file=sys.stderr,
+            )
+    else:
+        print("No Workshop mod updates are available.", file=sys.stderr)
+
+    write_json(
+        args.result,
+        {
+            "app_id": args.app_id,
+            "items": remote_versions,
+            "updates": updates,
+        },
+    )
+    for item_id in updates:
+        print(item_id)
+
+
+def record(args):
+    try:
+        result = json.loads(args.result.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Cannot read Workshop check result {args.result}: {error}") from error
+
+    if (
+        not isinstance(result, dict)
+        or result.get("app_id") != args.app_id
+        or not isinstance(result.get("items"), dict)
+        or not isinstance(result.get("updates"), list)
+    ):
+        raise ValueError(f"Workshop check result {args.result} has an unexpected format")
+
+    state = load_state(args.state, args.app_id)
+    remote_items = result["items"]
+    updates = set(result["updates"])
+    current_items = {}
+    for item_id, version in remote_items.items():
+        if item_id in updates:
+            current_items[item_id] = version
+        elif item_id in state["items"]:
+            current_items[item_id] = state["items"][item_id]
+        else:
+            raise ValueError(f"Workshop item {item_id} was not synchronized")
+
+    if not updates.issubset(remote_items):
+        raise ValueError("Workshop check result contains an unknown update")
+    write_json(args.state, {"app_id": args.app_id, "items": current_items})
+    print(f"Recorded Workshop versions for {len(updates)} updated item(s).")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    check_parser = subparsers.add_parser("check")
+    check_parser.add_argument("--app-id", type=int, required=True)
+    check_parser.add_argument("--config", type=Path, required=True)
+    check_parser.add_argument("--state", type=Path, required=True)
+    check_parser.add_argument("--result", type=Path, required=True)
+    check_parser.set_defaults(handler=check)
+
+    record_parser = subparsers.add_parser("record")
+    record_parser.add_argument("--app-id", type=int, required=True)
+    record_parser.add_argument("--state", type=Path, required=True)
+    record_parser.add_argument("--result", type=Path, required=True)
+    record_parser.set_defaults(handler=record)
+
+    args = parser.parse_args()
+    try:
+        args.handler(args)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
